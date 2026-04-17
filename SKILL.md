@@ -338,11 +338,14 @@ cd ~/.hermes/hermes-agent 2>/dev/null && python3 -m venv venv && ./venv/bin/pip 
 # 6. Verify database compatibility
 sqlite3 ~/.hermes/state.db "SELECT * FROM schema_version;" 2>/dev/null || echo "state.db may need rebuild"
 
-# 7. Adapt config for new environment:
-#    - Remove WSL-specific MCP servers (e.g. windows-mcp)
-#    - Update ollama host if applicable
-#    - Verify API key endpoints reachable from new network
-#    - Ensure Node.js is in PATH (needed for MCP servers like zhipu-vision)
+# 7. Clean up environment-specific config (DELETE, don't comment!)
+#    See "Environment-Specific Config Cleanup" section below for details.
+#    Key items:
+#    - DELETE MCP servers that only work on source OS (e.g. windows-mcp on non-WSL)
+#    - DELETE ollama provider if target has no ollama
+#    - DELETE channels that require hardware not present on target
+#    - UPDATE API key endpoints for target network
+#    - ENSURE Node.js is in PATH (needed for MCP servers)
 
 # 8. Create symlink
 mkdir -p ~/.local/bin
@@ -351,6 +354,65 @@ ln -sf ~/.hermes/hermes-agent/venv/bin/hermes ~/.local/bin/hermes 2>/dev/null
 # 9. Test
 hermes doctor 2>/dev/null || echo "Run 'hermes' to verify manually"
 ```
+
+### Environment-Specific Config Cleanup (All Frameworks)
+
+**Critical principle: DELETE environment-specific config blocks, do NOT just comment them out.** Commented-out blocks can still be parsed by some frameworks, cause confusing warnings, or make future debugging harder.
+
+#### Hermes config.yaml cleanup checklist
+
+| Config block | When to delete | Why |
+|-------------|---------------|-----|
+| `windows-mcp` under `mcp_servers` | Target is NOT WSL | Requires Windows host filesystem at `/mnt/` |
+| `ollama` under `custom_providers` | Target has no ollama installed | Connection errors on every request |
+| Any MCP server with `localhost:PORT` | Service not running on target | Timeout delays on startup |
+| WSL-specific paths (`/mnt/c/...`) | Target is NOT WSL | Path resolution failures |
+| Channel configs (weixin, telegram) | Target doesn't have credentials | Auth errors |
+
+#### OpenClaw openclaw.json cleanup checklist
+
+| Config block | When to delete | Why |
+|-------------|---------------|-----|
+| `extensions` entries | Extension not installed on target | Startup errors |
+| `channels` entries | Channel credentials invalid on target | Auth failures |
+| `mcpServers` entries | Server not reachable from target | Connection timeouts |
+
+#### Claude Code settings.json cleanup checklist
+
+| Config block | When to delete | Why |
+|-------------|---------------|-----|
+| `env.ANTHROPIC_BASE_URL` | URL unreachable from target | All API calls fail |
+| `enabledPlugins` | Plugin not available | Warnings / errors |
+
+#### How to delete blocks from YAML (Hermes)
+
+When SSH'd into a remote machine, use a Python script via base64 to surgically remove config blocks:
+
+```python
+# Example: remove windows-mcp block from config.yaml
+import sys
+path = sys.argv[1]
+with open(path, "r") as f:
+    lines = f.readlines()
+result = []
+in_block = False
+for line in lines:
+    if "windows-mcp" in line and ":" in line:
+        in_block = True
+        continue  # skip this line
+    if in_block:
+        if line.strip() and not line.startswith(" ") and not line.startswith("#"):
+            in_block = False
+            result.append(line)
+        else:
+            continue  # skip lines within the block
+    else:
+        result.append(line)
+with open(path, "w") as f:
+    f.writelines(result)
+```
+
+Apply the same pattern for any other environment-specific block by changing the keyword in the `if` check.
 
 ### OpenClaw Deploy
 
@@ -540,7 +602,7 @@ This pattern is infinitely more reliable than trying to nest quotes across bash 
 
 - **Hermes venv installed via `uv` has no `pip`**: The `hermes doctor` warning about "reinstall entry point" can be ignored if `hermes` binary already works. `uv` installs don't include pip in the venv.
 - **state.db schema v6 is compatible from v0.9.0 → v0.10.0**: Verified in practice. Both versions use `SCHEMA_VERSION = 6`.
-- **Windows-MCP must be commented out on non-WSL targets**: Use a Python script (via base64) to comment out the `windows-mcp:` section in config.yaml.
+- **Windows-MCP and other environment-specific configs must be DELETED, not commented**: On a non-WSL target (bare metal Linux, Pi, Mac), delete the entire `windows-mcp:` block from config.yaml. Commenting leaves dead config that can cause confusing errors later. Same principle: delete any MCP server, provider, or channel that references hardware/OS/software not present on the target.
 - **Node.js PATH**: If hermes installed Node in `~/.hermes/node/bin/`, add to `~/.bashrc`: `export PATH=$HOME/.hermes/node/bin:$PATH`
 
 ---
