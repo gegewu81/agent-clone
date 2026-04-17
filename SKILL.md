@@ -1,0 +1,535 @@
+---
+name: agent-clone
+description: Universal AI Agent cloning/migration tool. Supports Hermes, OpenClaw, and Claude Code. Package, transfer, and deploy agent identity, memory, skills, config, and sessions to any new environment.
+---
+
+# Agent Clone — Universal AI Agent Migration Tool
+
+Migrate your AI agent's complete identity (config, persona, memory, skills, sessions) to a new machine or environment. Supports **Hermes**, **OpenClaw**, and **Claude Code**.
+
+## Quick Start
+
+```bash
+# 1. On SOURCE machine: package everything
+agent-clone pack --framework hermes --output ~/agent-backup.tar.gz
+agent-clone pack --framework openclaw --output ~/agent-backup.tar.gz
+agent-clone pack --framework claude-code --output ~/agent-backup.tar.gz
+# Or pack ALL detected frameworks:
+agent-clone pack --all --output ~/agent-backup.tar.gz
+
+# 2. Transfer to target
+scp ~/agent-backup.tar.gz targethost:~
+
+# 3. On TARGET machine: deploy
+agent-clone deploy --input ~/agent-backup.tar.gz --framework hermes
+```
+
+Since this is a skill (not an installed CLI), the actual commands are bash snippets below — run them manually or via your agent.
+
+---
+
+## Step 1: Source Environment Audit
+
+Before packing, audit what exists:
+
+```bash
+# Detect installed frameworks
+for dir in ~/.hermes ~/.openclaw ~/.claude; do
+  [ -d "$dir" ] && echo "DETECTED: $dir ($(du -sh "$dir" 2>/dev/null | cut -f1))"
+done
+```
+
+---
+
+## Step 2: Framework Data Map
+
+### Data Categories (universal across all frameworks)
+
+| Category | What it contains | Why migrate it |
+|----------|-----------------|----------------|
+| **Config** | API keys, model settings, provider config | Agent cannot start without it |
+| **Persona** | Personality, instructions, behavioral rules | Defines who the agent is |
+| **Memory** | Long-term facts, user preferences, knowledge | Agent's accumulated understanding |
+| **Skills/Tools** | Custom workflows, templates, scripts | Agent's learned capabilities |
+| **Sessions** | Conversation history, context | Continuity of work |
+| **Channels** | Messaging integrations (WeChat, Telegram, etc.) | Communication channels |
+| **Credentials** | Auth tokens, device IDs | Platform access |
+| **MCP** | External tool server configs | Tool integrations |
+
+### Framework-Specific Paths
+
+#### Hermes
+
+| Category | Path | Notes |
+|----------|------|-------|
+| Config | `~/.hermes/config.yaml` | YAML, core settings |
+| Persona | `~/.hermes/SOUL.md` | Agent personality markdown |
+| Memory (structured) | `~/.hermes/memories/MEMORY.md` + `USER.md` | Markdown, human-readable |
+| Memory (DB) | `~/.hermes/memory_store.db` | SQLite, fact_store |
+| Sessions | `~/.hermes/state.db` + `~/.hermes/sessions/` | SQLite + JSON files |
+| Skills | `~/.hermes/skills/` | Directory tree of SKILL.md files |
+| Env vars / API keys | `~/.hermes/.env` | Dotenv file |
+| Auth | `~/.hermes/auth.json` | Auth tokens |
+| Channels | `~/.hermes/pairing/`, `~/.hermes/weixin/`, etc. | Platform-specific dirs |
+| Context cache | `~/.hermes/context_length_cache.yaml` | Compression cache |
+| MCP config | In `config.yaml` under `mcp_servers:` | Inline YAML |
+| Source (optional) | `~/.hermes/hermes-agent/` | Python venv — architecture-specific |
+| Binary (optional) | `~/.hermes/bin/tirith` | Architecture-specific, skip if cross-arch |
+
+#### OpenClaw
+
+| Category | Path | Notes |
+|----------|------|-------|
+| Config | `~/.openclaw/openclaw.json` | JSON, top-level config |
+| Persona | `~/.openclaw/workspace/SOUL.md` | Agent personality |
+| Identity | `~/.openclaw/workspace/IDENTITY.md` | Agent identity doc |
+| User profile | `~/.openclaw/workspace/USER.md` | User preferences |
+| Tools desc | `~/.openclaw/workspace/TOOLS.md` | Tool descriptions |
+| Agents desc | `~/.openclaw/workspace/AGENTS.md` | Agent descriptions |
+| Memory | `~/.openclaw/memory/main.sqlite` | SQLite with FTS5 + embeddings |
+| Sessions | `~/.openclaw/agents/main/sessions/` | JSONL files |
+| Extensions | `~/.openclaw/extensions/` | Installed extensions (WeChat, Weibo, etc.) |
+| Credentials | `~/.openclaw/credentials/` | Auth JSON files |
+| Identity (device) | `~/.openclaw/identity/` | device.json, device-auth.json |
+| Cron | `~/.openclaw/cron/` | Scheduled tasks |
+| MCP config | `~/.openclaw/workspace/config/mcporter.json` | MCP server configs |
+| Workspace skills | `~/.openclaw/workspace/skills/` | Skill definitions |
+| Browser data | `~/.openclaw/browser/` | Browser profiles, cache |
+| Logs | `~/.openclaw/logs/` | Usually skip for migration |
+
+#### Claude Code
+
+| Category | Path | Notes |
+|----------|------|-------|
+| Config | `~/.claude/settings.json` | JSON, env vars, plugins |
+| Persona (global) | `~/.claude/CLAUDE.md` | Global instructions (if exists) |
+| Persona (project) | `<project>/CLAUDE.md` | Per-project instructions |
+| Memory | `~/.claude/memory.md` or in projects | Auto-managed memory file |
+| Sessions | `~/.claude/sessions/` | Session transcripts |
+| Projects | `~/.claude/projects/` | Per-project settings + memory |
+| History | `~/.claude/history.jsonl` | Command history |
+| Skills | `~/.claude/skills/` | Custom skill directories |
+| Todos | `~/.claude/todos/` | Session todo items |
+| Plugins | `~/.claude/plugins/` | Installed plugins |
+| Stats | `~/.claude/stats-cache.json` | Usage stats (optional) |
+| Shell snapshots | `~/.claude/shell-snapshots/` | Shell state (optional) |
+
+---
+
+## Step 3: Packaging (Source Machine)
+
+### Hermes Pack
+
+```bash
+cd ~
+
+# Lean pack (recommended) — excludes architecture-specific binaries
+tar czf hermes-clone.tar.gz \
+  .hermes/config.yaml \
+  .hermes/SOUL.md \
+  .hermes/.env \
+  .hermes/auth.json \
+  .hermes/channel_directory.json \
+  .hermes/memories/ \
+  .hermes/memory_store.db \
+  .hermes/state.db \
+  .hermes/sessions/ \
+  .hermes/skills/ \
+  .hermes/context_length_cache.yaml \
+  .hermes/pairing/ \
+  .hermes/channels/ \
+  2>/dev/null
+
+# Full pack (same architecture) — includes venv and binaries
+# WARNING: hermes-agent/venv and bin/ are architecture-specific!
+# Only use if source and target are same OS + architecture
+tar czf hermes-clone-full.tar.gz \
+  .hermes/ \
+  --exclude='.hermes/checkpoints' \
+  --exclude='.hermes/migration' \
+  --exclude='.hermes/*.db-shm' \
+  --exclude='.hermes/*.db-wal'
+```
+
+### OpenClaw Pack
+
+```bash
+cd ~
+
+# Lean pack — excludes browser data and logs
+tar czf openclaw-clone.tar.gz \
+  .openclaw/openclaw.json \
+  .openclaw/workspace/ \
+  .openclaw/memory/ \
+  .openclaw/agents/main/sessions/ \
+  .openclaw/credentials/ \
+  .openclaw/identity/ \
+  .openclaw/cron/ \
+  .openclaw/extensions/ \
+  2>/dev/null
+
+# Full pack
+tar czf openclaw-clone-full.tar.gz \
+  .openclaw/ \
+  --exclude='.openclaw/browser' \
+  --exclude='.openclaw/logs'
+```
+
+### Claude Code Pack
+
+```bash
+cd ~
+
+# Lean pack — core identity and memory
+tar czf claude-code-clone.tar.gz \
+  .claude/settings.json \
+  .claude/CLAUDE.md \
+  .claude/memory.md \
+  .claude/skills/ \
+  .claude/projects/ \
+  2>/dev/null
+
+# Full pack — includes sessions and history
+tar czf claude-code-clone-full.tar.gz \
+  .claude/ \
+  --exclude='.claude/debug' \
+  --exclude='.claude/ide' \
+  --exclude='.claude/paste-cache' \
+  --exclude='.claude/shell-snapshots'
+```
+
+### Pack ALL Frameworks
+
+```bash
+cd ~
+tar czf agent-all-backup.tar.gz \
+  .hermes/config.yaml .hermes/SOUL.md .hermes/.env \
+  .hermes/memories/ .hermes/memory_store.db .hermes/state.db \
+  .hermes/sessions/ .hermes/skills/ .hermes/context_length_cache.yaml \
+  .openclaw/openclaw.json .openclaw/workspace/ .openclaw/memory/ \
+  .openclaw/agents/main/sessions/ .openclaw/credentials/ .openclaw/identity/ \
+  .claude/settings.json .claude/CLAUDE.md .claude/memory.md .claude/skills/ .claude/projects/ \
+  2>/dev/null
+echo "Backup size: $(du -sh agent-all-backup.tar.gz | cut -f1)"
+```
+
+---
+
+## Step 4: Target Environment Preparation
+
+### Prerequisites Check
+
+```bash
+# Run on TARGET machine
+echo "=== OS ==="
+uname -a
+
+echo "=== Architecture ==="
+uname -m  # x86_64, aarch64, armv7l
+
+echo "=== Disk ==="
+df -h ~ | tail -1
+
+echo "=== Memory ==="
+free -h | grep Mem
+
+echo "=== Python ==="
+python3 --version 2>/dev/null || echo "NOT FOUND"
+
+echo "=== Node.js ==="
+node --version 2>/dev/null || echo "NOT FOUND"
+
+echo "=== SQLite ==="
+sqlite3 --version 2>/dev/null || echo "NOT FOUND"
+
+echo "=== Git ==="
+git --version 2>/dev/null || echo "NOT FOUND"
+```
+
+### Install Framework (if not already)
+
+```bash
+# Hermes
+pip install hermes-agent  # or follow official docs
+
+# OpenClaw
+npm install -g openclaw   # or follow official docs
+
+# Claude Code
+npm install -g @anthropic-ai/claude-code
+```
+
+---
+
+## Step 5: Deployment (Target Machine)
+
+### Hermes Deploy
+
+```bash
+cd ~
+
+# 1. Install Hermes first (creates initial directory structure)
+pip install hermes-agent
+
+# 2. Stop Hermes if running
+pkill -f hermes 2>/dev/null
+
+# 3. Extract backup
+tar xzf hermes-clone.tar.gz
+
+# 4. Architecture adaptation
+ARCH=$(uname -m)
+if [ "$ARCH" != "x86_64" ]; then
+  echo "Non-x86_64 detected ($ARCH) — disabling tirith"
+  # tirith binary is x86_64 only, disable in config
+  sed -i 's/tirith_enabled: true/tirith_enabled: false/' ~/.hermes/config.yaml 2>/dev/null
+fi
+
+# 5. Recreate venv (architecture-specific, cannot copy from source)
+cd ~/.hermes/hermes-agent 2>/dev/null && python3 -m venv venv && ./venv/bin/pip install -e . 2>/dev/null
+
+# 6. Verify database compatibility
+sqlite3 ~/.hermes/state.db "SELECT * FROM schema_version;" 2>/dev/null || echo "state.db may need rebuild"
+
+# 7. Adapt config for new environment
+# - Remove WSL-specific MCP servers (windows-mcp)
+# - Update ollama host if applicable
+# - Verify API key endpoints reachable from new network
+# - Check Node.js is in PATH (needed for MCP servers)
+
+# 8. Create symlink
+mkdir -p ~/.local/bin
+ln -sf ~/.hermes/hermes-agent/venv/bin/hermes ~/.local/bin/hermes 2>/dev/null
+
+# 9. Test
+hermes doctor 2>/dev/null || echo "Run 'hermes' to verify manually"
+```
+
+### OpenClaw Deploy
+
+```bash
+cd ~
+
+# 1. Stop OpenClaw if running
+pkill -f openclaw 2>/dev/null
+
+# 2. Extract backup
+tar xzf openclaw-clone.tar.gz
+
+# 3. Ensure proper permissions
+chmod 600 ~/.openclaw/credentials/*.json 2>/dev/null
+chmod 600 ~/.openclaw/identity/*.json 2>/dev/null
+chmod 700 ~/.openclaw/
+
+# 4. Adapt config
+# - Update any hardcoded paths in openclaw.json
+# - Verify network reachability of API endpoints
+# - Re-link extensions if paths changed
+
+# 5. Verify memory DB
+sqlite3 ~/.openclaw/memory/main.sqlite "SELECT count(*) FROM chunks;" 2>/dev/null || echo "Memory DB issue"
+
+# 6. Test
+openclaw --version 2>/dev/null || echo "Verify manually"
+```
+
+### Claude Code Deploy
+
+```bash
+cd ~
+
+# 1. Extract backup
+tar xzf claude-code-clone.tar.gz
+
+# 2. Adapt settings
+# - Update env vars in settings.json (API endpoints, auth tokens)
+# - Verify ANTHROPIC_AUTH_TOKEN is valid for this environment
+# - Check plugin compatibility
+
+# 3. Per-project CLAUDE.md files must be in their respective project dirs
+#    If you have project-level CLAUDE.md, restore them to the correct paths
+
+# 4. Test
+claude --version 2>/dev/null || echo "Verify manually"
+claude  # Start interactive session
+```
+
+---
+
+## Step 6: Cross-Architecture Compatibility Matrix
+
+Critical when source and target have different CPU architectures:
+
+| Data Type | x86→x86 | x86→arm64 | arm64→x86 | arm64→arm64 |
+|-----------|---------|-----------|-----------|-------------|
+| **Config files** (YAML/JSON/MD) | ✅ Copy | ✅ Copy | ✅ Copy | ✅ Copy |
+| **SQLite databases** | ✅ Copy | ✅ Copy | ✅ Copy | ✅ Copy |
+| **Text skills** (*.md, *.py) | ✅ Copy | ✅ Copy | ✅ Copy | ✅ Copy |
+| **Python venv** | ✅ Copy | ❌ Rebuild | ❌ Rebuild | ✅ Copy |
+| **Native binaries** (tirith, etc.) | ✅ Copy | ❌ Reinstall | ❌ Reinstall | ✅ Copy |
+| **Node modules** (native deps) | ✅ Copy | ⚠️ Check | ⚠️ Check | ✅ Copy |
+| **npm global packages** | ✅ Copy | ❌ Reinstall | ❌ Reinstall | ✅ Copy |
+
+**Rule of thumb**: Pure text/data files are portable. Anything compiled (venv, binaries, native node modules) must be rebuilt on target.
+
+---
+
+## Step 7: Version Compatibility
+
+### Hermes
+- `state.db` has a schema version. Check: `sqlite3 ~/.hermes/state.db "SELECT * FROM schema_version;"`
+- Minor version differences (e.g., v0.9.0 → v0.10.0) may have schema changes
+- **Recommendation**: If target has a newer version, install it first, let it create a fresh DB, then test importing the old one. If incompatible, keep the new DB and only restore config/skills/memories.
+
+### OpenClaw
+- `memory/main.sqlite` uses FTS5 and embedding vectors
+- Schema may differ between versions
+- **Recommendation**: Same as above — prefer letting the new version create its DB, then migrate content if needed
+
+### Claude Code
+- `settings.json` schema is simple and stable
+- `projects/` structure may evolve but is generally backward-compatible
+- **Recommendation**: Low risk, just copy
+
+---
+
+## Step 8: Security & Privacy
+
+### Sensitive Data Checklist
+
+Before transferring ANY backup, be aware these files contain secrets:
+
+| Framework | File | Contains |
+|-----------|------|----------|
+| Hermes | `.env` | API keys, tokens |
+| Hermes | `auth.json` | Auth tokens |
+| Hermes | `config.yaml` | MCP server URLs, provider keys |
+| OpenClaw | `credentials/` | Platform auth (WeChat, Feishu, etc.) |
+| OpenClaw | `identity/device-auth.json` | Device authentication |
+| OpenClaw | `openclaw.json` | May contain API keys |
+| Claude Code | `settings.json` | `ANTHROPIC_AUTH_TOKEN`, env vars |
+
+### Transfer Recommendations
+
+```bash
+# Option A: SCP over LAN (encrypted in transit)
+scp agent-backup.tar.gz targethost:~
+
+# Option B: Encrypted archive
+tar czf - <files> | gpg --symmetric --cipher-algo AES256 -o agent-backup.tar.gz.gpg
+# On target:
+gpg -d agent-backup.tar.gz.gpg | tar xzf -
+
+# Option C: rsync over SSH
+rsync -avz --progress agent-backup.tar.gz targethost:~
+```
+
+### NEVER commit these to public repos:
+- `.env` files
+- `auth.json`, `credentials/`
+- `settings.json` (contains tokens)
+- `identity/device-auth.json`
+- Any file containing API keys or auth tokens
+
+---
+
+## Step 9: Post-Deploy Verification
+
+Run this checklist on the target machine after deployment:
+
+### Hermes
+```bash
+hermes doctor
+# Then inside a hermes session:
+# - memory → should show saved memories
+# - fact_store search "test" → should return results
+# - session_search → should show past sessions
+# - skill list → should show all skills
+# - Test MCP server connections
+```
+
+### OpenClaw
+```bash
+openclaw --version
+# Start openclaw and verify:
+# - Memory recall works
+# - Extensions load (check channels)
+# - Workspace files present
+# - Sessions history accessible
+```
+
+### Claude Code
+```bash
+claude --version
+claude
+# Then verify:
+# - /memory → shows saved memories
+# - Settings loaded (check env vars)
+# - Skills available
+# - Projects and their CLAUDE.md files
+```
+
+---
+
+## Troubleshooting
+
+### "state.db schema mismatch" (Hermes)
+- Let the new version create a fresh state.db
+- Only restore: config, SOUL.md, memories/, skills/, .env
+
+### "tirith segfault" (Hermes)
+- Binary is wrong architecture. Set `tirith_enabled: false` in config.yaml
+
+### "MCP server won't connect"
+- Check Node.js is in PATH: `which npx`
+- Check network reachability: `curl <mcp-server-url>`
+- Check config paths are valid on target
+
+### "Memory DB locked/corrupt" (OpenClaw/Hermes)
+- Ensure no other instance is running
+- Copy without `-shm` and `-wal` files
+- Run `sqlite3 <db> "PRAGMA integrity_check;"`
+
+### "API key not working"
+- Some keys are bound to IP/machine. Regenerate for new environment
+- Check endpoint URLs are reachable from new network
+
+### "Python venv broken"
+- Never copy venv across architectures. Always rebuild:
+```bash
+cd ~/.hermes/hermes-agent
+rm -rf venv
+python3 -m venv venv
+./venv/bin/pip install -e .
+```
+
+---
+
+## Cross-Framework Migration
+
+Want to move data FROM one framework TO another? Here's the mapping:
+
+| From → To | Config | Persona | Memory | Skills |
+|-----------|--------|---------|--------|--------|
+| Hermes → OpenClaw | Manual rewrite | SOUL.md → workspace/SOUL.md | memories/MEMORY.md → workspace/memory/ | Manual port |
+| OpenClaw → Hermes | Manual rewrite | workspace/SOUL.md → SOUL.md | memory/main.sqlite → text extraction → memories/ | Manual port |
+| Claude Code → Hermes | Manual rewrite | CLAUDE.md → SOUL.md | memory.md → memories/ | Manual port |
+| Hermes → Claude Code | Manual rewrite | SOUL.md → CLAUDE.md | memories/ → memory.md | skills/ → manual |
+| Any → Any | Manual | Copy MD content | Extract to text | Rewrite |
+
+Cross-framework migration is NOT automatic — frameworks have fundamentally different architectures. But persona (personality markdown) and memory (text) are the most portable elements.
+
+---
+
+## One-Liner Quick Pack (All Frameworks)
+
+```bash
+cd ~ && tar czf agent-backup-$(date +%Y%m%d).tar.gz \
+  .hermes/config.yaml .hermes/SOUL.md .hermes/.env .hermes/auth.json \
+  .hermes/memories/ .hermes/memory_store.db .hermes/state.db \
+  .hermes/skills/ .hermes/sessions/ \
+  .openclaw/openclaw.json .openclaw/workspace/ .openclaw/memory/ \
+  .openclaw/credentials/ .openclaw/identity/ \
+  .claude/settings.json .claude/CLAUDE.md .claude/skills/ .claude/projects/ \
+  2>/dev/null && echo "Done: $(du -sh agent-backup-$(date +%Y%m%d).tar.gz | cut -f1)"
+```
