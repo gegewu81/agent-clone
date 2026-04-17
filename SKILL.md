@@ -518,6 +518,33 @@ claude
 
 ---
 
+## Practical Tips for Remote Migration
+
+When migrating via SSH, you'll hit shell quoting hell trying to run Python one-liners on the remote machine. Use **base64 encoding** to bypass all quoting issues:
+
+```bash
+# Local machine: encode a Python script, pipe to remote python3
+import base64
+script = '''
+import sqlite3
+c = sqlite3.connect("/home/user/.hermes/state.db")
+print("sessions:", c.execute("SELECT count(*) FROM sessions").fetchone()[0])
+'''
+encoded = base64.b64encode(script.encode()).decode()
+# Then: ssh user@host 'echo <encoded> | base64 -d | python3'
+```
+
+This pattern is infinitely more reliable than trying to nest quotes across bash → ssh → python.
+
+### Other lessons from real deployments
+
+- **Hermes venv installed via `uv` has no `pip`**: The `hermes doctor` warning about "reinstall entry point" can be ignored if `hermes` binary already works. `uv` installs don't include pip in the venv.
+- **state.db schema v6 is compatible from v0.9.0 → v0.10.0**: Verified in practice. Both versions use `SCHEMA_VERSION = 6`.
+- **Windows-MCP must be commented out on non-WSL targets**: Use a Python script (via base64) to comment out the `windows-mcp:` section in config.yaml.
+- **Node.js PATH**: If hermes installed Node in `~/.hermes/node/bin/`, add to `~/.bashrc`: `export PATH=$HOME/.hermes/node/bin:$PATH`
+
+---
+
 ## Troubleshooting
 
 ### "state.db schema mismatch" (Hermes)
