@@ -654,3 +654,38 @@ Want to move data FROM one framework TO another? Here's the mapping:
 | Any → Any | Manual | Copy MD content | Extract to text | Rewrite |
 
 Cross-framework migration is NOT automatic — frameworks have fundamentally different architectures. But persona (personality markdown) and memory (text content) are the most portable elements.
+
+---
+
+## Channel Conflict Warning
+
+When running multiple agent instances with the **same credentials** (e.g., same WeChat bot token on both WSL and Pi), messaging channels will conflict:
+
+- **Last-connection-wins**: The instance that connects last takes over the channel
+- **Unstable behavior**: Messages may route to either instance unpredictably, or connections may drop repeatedly
+- **Solution**: Only enable channels on ONE instance. On the backup/secondary machine, either:
+  - Delete the channel config blocks from config.yaml (e.g. `weixin` section)
+  - Or simply don't start that instance when the primary is running
+  - If both must run, use different bot tokens / channel accounts
+
+### Hermes weixin (微信) channel details
+- Credentials stored in: `~/.hermes/weixin/accounts/`, `~/.hermes/pairing/weixin-approved.json`
+- The bot token in `weixin/accounts/<id>@im.bot.json` can only sustain one long-poll connection at a time
+- If you clone these files to a second machine, both instances will fight over the same WeChat connection
+
+---
+
+## Verified Deployments
+
+### Raspberry Pi (aarch64) — tested 2026-04-17
+- **Source**: WSL x86_64, Hermes v0.9.0, schema_version=6
+- **Target**: Pi arm64 (aarch64), Debian 13, Hermes v0.10.0
+- **Result**: Fully compatible. state.db schema v6 works on v0.10.0 (both use SCHEMA_VERSION=6)
+- **Lean pack size**: 14MB (805 files: config, SOUL.md, memories, state.db, memory_store.db, 91 skills, 106 sessions)
+- **Actions taken**:
+  1. `tirith_enabled: false` (arm64 has no tirith binary)
+  2. Deleted `windows-mcp` block from config.yaml (not WSL)
+  3. Added `export PATH=$HOME/.hermes/node/bin:$PATH` to `~/.bashrc`
+  4. Synced local SKILL.md to Pi
+- **uv-installed venv**: No pip in venv, hermes doctor warns "reinstall entry point" but hermes binary works fine — safe to ignore
+- **hermes doctor result**: All core checks pass (Python, packages, config, memories, state.db, skills, Node.js, API connectivity)
